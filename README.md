@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # dso-data-pattern-replacer
 Finds and replaces data matching a regular expression pattern with a specified replacement string. - Focused on Tools for sanitizing and obfuscating sensitive data within text files and structured data formats
 
