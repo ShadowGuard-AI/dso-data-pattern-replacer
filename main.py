@@ -4,6 +4,7 @@ import argparse
 import re
 import logging
 import os
+import sys
 import chardet
 from faker import Faker
 
@@ -59,22 +60,27 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         except UnicodeDecodeError as e:
             raise ValueError(f"Error decoding file with encoding {encoding}: {e}")
 
-        # Use faker to dynamically generate replacement values
+        # Build the function re.sub calls for each match. The old code ran
+        # eval on the faker expression once, without calling it, so the
+        # replacement text was the string form of a bound method object and
+        # every match got that same useless string. Resolving the attribute
+        # by name and calling it per match gives each match its own value,
+        # and returning the literal through a callable keeps backslashes in
+        # it from being read as regex template escapes.
         fake = Faker()
-        replacement_string = ""
         if replacement.startswith("faker."):
-            try:
-                replacement_string = eval(f"fake.{replacement[6:]}")
-            except AttributeError:
-                logging.error(f"Invalid faker attribute: {replacement[6:]}. Using literal replacement.")
-                replacement_string = replacement
-            except Exception as e:
-                logging.error(f"Error while executing faker call. Using literal replacement. Error: {e}")
-                replacement_string = replacement
-
+            attr_name = replacement[len("faker."):]
+            provider = getattr(fake, attr_name, None) if attr_name.isidentifier() else None
+            if callable(provider):
+                def replacement_fn(match):
+                    return str(provider())
+            else:
+                logging.error(f"Invalid faker attribute: {attr_name}. Using literal replacement.")
+                def replacement_fn(match):
+                    return replacement
         else:
-            replacement_string = replacement
-
+            def replacement_fn(match):
+                return replacement
 
         # Validate pattern
         try:
@@ -82,7 +88,7 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         except re.error as e:
             raise ValueError(f"Invalid regular expression pattern: {e}")
 
-        new_data = re.sub(pattern, str(replacement_string), data)
+        new_data = re.sub(pattern, replacement_fn, data)
 
         if dry_run:
             logging.info("Dry run: No changes will be written.")
@@ -103,12 +109,16 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
 
     except FileNotFoundError as e:
         logging.error(e)
+        raise
     except ValueError as e:
         logging.error(e)
+        raise
     except IOError as e:
         logging.error(e)
+        raise
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
+        raise
 
 
 def main():
@@ -129,7 +139,10 @@ def main():
     logging.debug(f"Dry run: {args.dry_run}")
 
 
-    process_file(args.input_file, args.pattern, args.replacement, args.output_file, args.encoding, args.dry_run)
+    try:
+        process_file(args.input_file, args.pattern, args.replacement, args.output_file, args.encoding, args.dry_run)
+    except Exception:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
