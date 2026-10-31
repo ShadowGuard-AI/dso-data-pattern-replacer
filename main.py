@@ -75,9 +75,10 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
                 def replacement_fn(match):
                     return str(provider())
             else:
-                logging.error(f"Invalid faker attribute: {attr_name}. Using literal replacement.")
-                def replacement_fn(match):
-                    return replacement
+                # An invalid faker attribute fails the run here, before
+                # any write. The old code logged the error and stamped
+                # the literal attribute text over every match instead.
+                raise ValueError(f"Invalid faker attribute: {attr_name}")
         else:
             def replacement_fn(match):
                 return replacement
@@ -88,11 +89,18 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         except re.error as e:
             raise ValueError(f"Invalid regular expression pattern: {e}")
 
+        # Count replacements on every run, as dry run already did. A
+        # run that replaces nothing has not done the work it reports,
+        # so it fails here, before any write, in every mode.
+        num_replacements = len(re.findall(pattern, data))
+        if num_replacements == 0:
+            logging.error("No replacements made: the pattern matched nothing in the input.")
+            raise ValueError("No replacements made: the pattern matched nothing in the input.")
+
         new_data = re.sub(pattern, replacement_fn, data)
 
         if dry_run:
             logging.info("Dry run: No changes will be written.")
-            num_replacements = len(re.findall(pattern, data))
             logging.info(f"Dry run complete.  Would have made {num_replacements} replacements.")
             return
 
@@ -102,6 +110,7 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         try:
             with open(output_file, 'w', encoding=encoding) as f:
                 f.write(new_data)
+            logging.info(f"Made {num_replacements} replacements.")
             logging.info(f"Successfully processed file: {input_file}. Output written to: {output_file}")
 
         except Exception as e:
