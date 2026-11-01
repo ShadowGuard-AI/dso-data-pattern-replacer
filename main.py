@@ -68,6 +68,11 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         # and returning the literal through a callable keeps backslashes in
         # it from being read as regex template escapes.
         fake = Faker()
+        # The faker. prefix is a directive, not text: any replacement that
+        # begins with it is resolved as an attribute name, so there is no
+        # way to insert the literal words faker.name into a file with this
+        # tool. The Faker instance is also unseeded, so a faker run cannot
+        # be repeated.
         if replacement.startswith("faker."):
             attr_name = replacement[len("faker."):]
             provider = getattr(fake, attr_name, None) if attr_name.isidentifier() else None
@@ -89,9 +94,13 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
         except re.error as e:
             raise ValueError(f"Invalid regular expression pattern: {e}")
 
-        # Count replacements on every run, as dry run already did. A
-        # run that replaces nothing has not done the work it reports,
-        # so it fails here, before any write, in every mode.
+        # The count is taken with a separate findall pass over the data,
+        # and the substitution then scans the same string again, so the
+        # file is matched twice per run. The count and the substitution
+        # agree because the data cannot change between the two passes on
+        # the same string. One consequence sits below: this zero check
+        # runs before the dry run branch, so a dry run against a pattern
+        # that matches nothing fails the run instead of reporting zero.
         num_replacements = len(re.findall(pattern, data))
         if num_replacements == 0:
             logging.error("No replacements made: the pattern matched nothing in the input.")
@@ -104,6 +113,13 @@ def process_file(input_file, pattern, replacement, output_file=None, encoding=No
             logging.info(f"Dry run complete.  Would have made {num_replacements} replacements.")
             return
 
+        # No output file means the input is overwritten, and an explicit
+        # -o naming the input is accepted the same way; there is no
+        # resolved path refusal in this tool, because in place editing is
+        # its documented mode. The write truncates first, so it is not
+        # atomic, and the whole file was read into memory before this
+        # point, which is the only reason the overwrite cannot eat its
+        # own input mid read.
         if output_file is None:
             output_file = input_file
 
